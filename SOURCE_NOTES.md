@@ -13,4 +13,4 @@ The PDF appears to be a survey-editor export. Editor-only Q IDs and branch annot
 7. Minor obvious typos are corrected: “ditigal” → “digital”, repeated “del del” → “del”, “en den” → “den”, “kritisk granska” → “kritiskt granska”, and “ingen hinder” → “inget hinder”. Question meanings/scales are otherwise preserved.
 8. Introductory study information and researcher names are from the PDF. The separate optional interview form implements the invitation in the introduction; the PDF does not include an actual interview form page.
 9. All substantive questions are optional, since the source does not clearly establish mandatory-answer behavior and participation is voluntary. Consent is required to enter the survey.
-10. No Finnish translation or Finnish-specific adaptation has been added: despite the workspace/repository name, the source concerns Swedish schools and is in Swedish.
+10. A complete Finnish translation is available. The study still concerns Swedish schools: references to Sweden, Skolverket, Umeå universitet, UR, and the Swedish school system are retained or explained. This is a translation, not a Finnish-specific research adaptation.

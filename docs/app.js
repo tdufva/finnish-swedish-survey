@@ -1,27 +1,205 @@
-import {sections, questions, cleanAnswers} from './questions.js';
-import {config} from './config.js';
-const main=document.querySelector('#main');
-const steps=document.querySelector('#steps');
-if(!config.url||!config.key){const notice=document.createElement('div');notice.className='preview-notice';notice.textContent='Förhandsvisning: enkäten är ännu inte öppen för insamling. Inga svar sparas.';document.querySelector('header').after(notice);}
-const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let answers={}, page=-1, maxPage=-1, busy=false;
-let responseId=crypto.randomUUID();
-let contactId=crypto.randomUUID();
-const info=`<div class="study-info"><p>Vi vill bjuda in dig som är legitimerad bildlärare i grundskolan att delta i en enkätstudie om förutsättningarna för bildundervisning i Sverige. Större studier om bildundervisning och dess förutsättningar är ovanliga, och kunskapsläget om hur förutsättningarna formar bildundervisning svagt. Det är därmed mycket viktigt att få in så många svar som möjligt för att resultaten ska bli tillförlitliga. Ditt deltagande och dina erfarenheter är därför särskilt värdefulla.</p><p>Ditt deltagande är frivilligt och studien följer forskningsetiska riktlinjer, samt gällande lagstiftning om GDPR. Det innebär bland annat att alla svar anonymiseras och inte kan kopplas till dig som person eller till din mejladress. Mejladresserna vi använder i utskick av enkäten har erhållits från Skolverket och deras register över legitimerade bildlärare.</p><p>I slutet av enkäten finns det möjlighet att anmäla intresse för att delta i en uppföljande intervju om förutsättningarna för din undervisning samt användande av AI och bildundervisning. Då får du lämna din mejladress och namn i ett separat formulär, så att dessa inte kan knytas till enkätsvaren du lämnat. E-postadress och namn betraktas som personuppgift och kommer att förvaras säkert i enlighet med Umeå universitets riktlinjer. Personuppgifterna sparas fram till att studien är genomförd. Ansvarig för studien och insamlade data är forskare Hanna Ahrenby vid Umeå Universitet.</p><p>Tack för att du tar dig tid att bidra till denna viktiga studie!</p></div><div class="signature">Vänliga hälsningar,<br><strong>Hanna Ahrenby, David Källberg</strong><br>Umeå universitet</div>`;
-function navigation(){steps.innerHTML=['Information & samtycke',...sections.map(s=>s.title),'Granska & skicka'].map((title,i)=>`<button type="button" class="step ${page===i-1?'active':''}" data-page="${i-1}" ${i-1>maxPage?'disabled':''} ${page===i-1?'aria-current="step"':''}><span class="step-num">${i===0?'i':i}</span>${escape(title)}</button>`).join('');steps.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>go(Number(b.dataset.page)));}
-function go(p){page=p;maxPage=Math.max(maxPage,p);render();window.scrollTo({top:0});main.focus();}
-function render(){navigation();if(page===-1){main.innerHTML=`<section class="panel"><p class="step-kicker">VÄLKOMMEN TILL STUDIEN</p><h2>Information om studien</h2>${info}<p class="intro-note">Du kan lämna frågor obesvarade. Skriv inte namn, e-postadresser eller andra identifierande uppgifter i dina enkätsvar. Dina svar skickas först när du väljer ”Skicka mina svar”.</p><form id="consent"><fieldset class="question"><legend><span class="q-num">FRÅGA 1</span>Jag har tagit del av informationen om studien, undervisar bild i grundskolan och vill delta i studien.</legend><div class="choices compact">${['Ja','Nej'].map(v=>`<label class="choice"><input required type="radio" name="consent" value="${v}" ${answers.Q24===v?'checked':''}>${v}</label>`).join('')}</div></fieldset><div class="actions"><span class="hint">7 delar · svara i din egen takt</span><button class="primary">Fortsätt →</button></div></form></section>`;document.querySelector('#consent').onsubmit=e=>{e.preventDefault();const v=new FormData(e.target).get('consent');if(v==='Ja'){answers.Q24='Ja';go(0)}else{answers={};maxPage=-1;page=-1;navigation();main.innerHTML='<section class="panel"><h2>Tack för ditt intresse</h2><p>Du har valt att inte delta. Inga svar har skickats.</p><button class="secondary" id="restart">Tillbaka till informationen</button></section>';document.querySelector('#restart').onclick=()=>go(-1)}};return;}
- if(page===sections.length){review();return;}
- const s=sections[page];main.innerHTML=`<div class="progress-meta"><span>Del ${page+1} av ${sections.length}</span><span>${Math.round(page/sections.length*100)} % av enkätens delar</span></div><progress value="${page}" max="${sections.length}" aria-label="Enkätens framsteg"></progress><div class="section-heading"><p class="step-kicker">${escape(s.subtitle)}</p><h2>${escape(s.title)}</h2><p>Alla frågor är frivilliga. Välj det svar som passar bäst.</p></div><form class="panel" id="survey">${s.questions.map(questionHTML).join('')}<div class="actions"><button class="secondary" type="button" id="back">← Tillbaka</button><button class="primary">${page===sections.length-1?'Granska svar →':'Nästa del →'}</button></div><p class="privacy-note">Svaren finns bara i den här öppna sidan tills du skickar dem. Om du laddar om eller stänger sidan försvinner de.</p></form>`;
- const form=document.querySelector('#survey');form.addEventListener('change',record);form.addEventListener('input',e=>{if(e.target.matches('textarea,input[type=text]')) record(e)});form.onsubmit=e=>{e.preventDefault();go(page+1)};document.querySelector('#back').onclick=()=>go(page-1);updateConditional();
+import { sections, questions, cleanAnswers } from './questions.js';
+import { config } from './config.js';
+import { fiQuestions, fiSections, fiInfo } from './fi.js';
+import { svInfo } from './sv-info.js';
+import { strings } from './ui.js';
+
+const main = document.querySelector('#main');
+const steps = document.querySelector('#steps');
+const escape = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let lang = new URLSearchParams(location.search).get('lang') === 'fi' ? 'fi' : 'sv';
+let answers = {}, page = -1, maxPage = -1, busy = false, declined = false;
+let contact = {name:'', email:'', consent:false}, contactSaved = false;
+const responseId = crypto.randomUUID();
+const contactId = crypto.randomUUID();
+const t = key => strings[lang][key];
+const localQuestion = q => lang === 'fi' ? {...q, ...fiQuestions[q.id]} : q;
+const localSection = i => lang === 'fi' ? {title:fiSections[i][0], subtitle:fiSections[i][1]} : sections[i];
+
+const languageControl = document.createElement('div');
+languageControl.className = 'language-control';
+languageControl.setAttribute('role','group');
+languageControl.setAttribute('aria-label','Språk / Kieli');
+languageControl.innerHTML = '<button type="button" lang="sv" data-lang="sv">Svenska</button><button type="button" lang="fi" data-lang="fi">Suomi</button>';
+document.querySelector('header').append(languageControl);
+languageControl.querySelectorAll('button').forEach(b => b.onclick = () => {
+  if (busy || b.dataset.lang === lang) return;
+  lang = b.dataset.lang;
+  const url = new URL(location.href); url.searchParams.set('lang', lang);
+  history.replaceState(null, '', url);
+  render();
+});
+
+function chrome() {
+  document.documentElement.lang = lang;
+  document.title = t('title');
+  document.querySelector('meta[name=description]').content = t('description');
+  document.querySelector('.brand').innerHTML = `<span class="brand-mark" aria-hidden="true">b.</span> ${t('brand')}`;
+  document.querySelector('.header-note').textContent = t('header');
+  document.querySelector('.eyebrow').textContent = t('eyebrow');
+  document.querySelector('h1').innerHTML = t('hero');
+  document.querySelector('.aside-intro').textContent = t('intro');
+  document.querySelector('.aside-note').innerHTML = t('voluntary');
+  document.querySelector('footer').innerHTML = `${t('brand')} <span>${t('footer')}</span>`;
+  steps.setAttribute('aria-label',t('navLabel'));
+  languageControl.querySelectorAll('button').forEach(b => {b.setAttribute('aria-pressed',String(b.dataset.lang === lang)); b.disabled = busy;});
+  if (!config.url || !config.key) {
+    let notice = document.querySelector('.preview-notice');
+    if (!notice) {notice=document.createElement('div');notice.className='preview-notice';document.querySelector('header').after(notice);}
+    notice.textContent = t('preview');
+  }
 }
-function questionHTML(q){const value=answers[q.id];const label=`<span class="q-num">${q.number?'FRÅGA '+q.number:'FÖRDJUPNING'}</span>${escape(q.title)}`;let body='';if(q.type==='text')body=`<textarea aria-label="${escape(q.title)}" name="${q.id}" maxlength="5000" rows="3">${escape(value)}</textarea>`;else if(q.type==='matrix')body=`<p class="hint">Välj ett alternativ per påstående.</p>${q.rows.map((row,r)=>`<fieldset class="matrix-row"><legend>${escape(row)}</legend><div class="matrix-options" style="--cols:${q.options.length}">${q.options.map((v,i)=>`<label class="choice"><input type="radio" name="${q.id}:${r}" value="${escape(v)}" ${value?.[r]===v?'checked':''}><span>${escape(v)}</span></label>`).join('')}</div></fieldset>`).join('')}`;else body=`${q.type==='multi'?'<p class="hint">Du kan välja flera alternativ.</p>':''}<div class="choices ${q.options.every(o=>o.length<40)?'compact':''}">${q.options.map(v=>`<label class="choice"><input type="${q.type==='multi'?'checkbox':'radio'}" name="${q.id}" value="${escape(v)}" ${(q.type==='multi'?value?.includes(v):value===v)?'checked':''}><span>${escape(v)}</span></label>`).join('')}</div>${q.other?`<label class="other-label" id="${q.id}_other_wrap">Annat, ange gärna:<input type="text" name="${q.id}_other" maxlength="5000" value="${escape(answers[q.id+'_other'])}"></label>`:''}`;return `<fieldset class="question" data-question="${q.id}"><legend>${label}</legend>${body}</fieldset>`;}
-function record(e){const el=e.target;const [id,row]=el.name.split(':');if(!id)return;const q=questions.find(q=>q.id===id);if(el.type==='checkbox'){let values=[...document.querySelectorAll(`input[name="${id}"]:checked`)].map(x=>x.value);if(q?.exclusive&&el.checked){if(el.value===q.exclusive)values=[q.exclusive];else values=values.filter(x=>x!==q.exclusive);document.querySelectorAll(`input[name="${id}"]`).forEach(x=>x.checked=values.includes(x.value));}answers[id]=values;}else if(row!==undefined){answers[id]??={};answers[id][row]=el.value;}else answers[id]=el.value;updateConditional();}
-function updateConditional(){for(const q of questions){const box=document.querySelector(`[data-question="${q.id}"]`);if(!box)continue;if(q.when){const visible=answers[q.when[0]]===q.when[1];box.hidden=!visible;box.disabled=!visible;if(!visible)delete answers[q.id];}if(q.other){const show=answers[q.id]?.includes('Annat');const wrap=document.querySelector('#'+q.id+'_other_wrap');wrap.hidden=!show;wrap.querySelector('input').disabled=!show;if(!show)delete answers[q.id+'_other'];}}}
-function review(){const cleaned=cleanAnswers(answers);main.innerHTML=`<section class="panel"><p class="step-kicker">SISTA STEGET</p><h2>Granska dina svar</h2><p>Du kan gå tillbaka och ändra dina svar innan du skickar. Obesvarade frågor går bra.</p>${sections.map((s,i)=>`<details class="review-section"><summary>${escape(s.title)}</summary><dl>${s.questions.filter(q=>!q.when||answers[q.when[0]]===q.when[1]).map(q=>`<dt>${q.number?q.number+'. ':''}${escape(q.title)}</dt><dd>${answerText(q,cleaned[q.id])}</dd>`).join('')}</dl><button type="button" class="text-button" data-edit="${i}">Ändra den här delen</button></details>`).join('')}<p class="privacy-note">Inga namn eller e-postadresser sparas tillsammans med enkätsvaren.</p><div role="alert" id="error" class="error"></div><div class="actions"><button class="secondary" id="back">← Tillbaka</button><button class="primary" id="send">Skicka mina svar</button></div></section>`;document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>go(Number(b.dataset.edit)));document.querySelector('#back').onclick=()=>go(sections.length-1);document.querySelector('#send').onclick=submit;}
-function answerText(q,v){if(v===undefined)return 'Inte besvarad';if(q.type==='matrix')return q.rows.map((r,i)=>escape(r)+': '+escape(v[i]??'Inte besvarad')).join('<br>');return escape(Array.isArray(v)?v.join('; ')+(answers[q.id+'_other']?' — '+answers[q.id+'_other']:''):v);}
-async function send(table,payload){if(!config.url||!config.key)throw new Error('Enkäten är inte öppen för insamling ännu. Dina svar har inte skickats.');const res=await fetch(`${config.url}/rest/v1/${table}`,{method:'POST',headers:{'Content-Type':'application/json',apikey:config.key,Prefer:'return=minimal'},body:JSON.stringify(payload),signal:AbortSignal.timeout(20000)});if(res.status===409){const body=await res.json().catch(()=>({}));if(body.code==='23505')return;}if(!res.ok)throw new Error('Det gick inte att skicka just nu. Dina svar finns kvar på sidan. Försök igen.');}
-async function submit(){if(busy)return;busy=true;const button=document.querySelector('#send');button.disabled=true;button.textContent='Skickar…';document.querySelector('#error').textContent='';try{await send(config.responseTable,{id:responseId,survey_version:'1.0',answers:cleanAnswers(answers)});answers={};maxPage=-1;page=99;steps.innerHTML='';showSuccess();}catch(e){document.querySelector('#error').textContent=e.name==='TimeoutError'?'Anslutningen tog för lång tid. Försök igen; samma svar skickas inte dubbelt.':e.message;button.disabled=false;button.textContent='Försök skicka igen';}finally{busy=false;}}
-function showSuccess(){main.innerHTML=`<section class="panel"><div class="success-mark" aria-hidden="true">✓</div><p class="step-kicker">ENKÄTEN ÄR SKICKAD</p><h2>Tack för att du bidrar.</h2><p>Dina svar har sparats. Dina erfarenheter hjälper oss att förstå förutsättningarna för bildundervisning.</p><hr style="border:0;border-top:1px solid var(--line);margin:30px 0"><h2>Vill du delta i en intervju?</h2><p>Du kan anmäla intresse för en uppföljande intervju om din undervisning, AI och bildämnet.</p><p class="hint">Detta är ett separat, frivilligt formulär. Ditt namn och din e-postadress sparas utan koppling till dina enkätsvar.</p><form class="contact" id="contact"><label>Namn<input type="text" name="name" required maxlength="200" autocomplete="name"></label><label>E-postadress<input type="email" name="email" required maxlength="254" autocomplete="email"></label><label class="choice"><input type="checkbox" required><span>Jag vill bli kontaktad för en intervju och samtycker till att mitt namn och min e-postadress sparas för detta ändamål tills studien är genomförd.</span></label><div class="error" id="contact-error" role="alert"></div><button class="primary" type="submit">Anmäl intresse</button></form><p class="privacy-note">Du kan också stänga sidan nu. Dina enkätsvar är redan sparade.</p></section>`;window.scrollTo({top:0});main.focus();document.querySelector('#contact').onsubmit=async e=>{e.preventDefault();const form=e.target,button=form.querySelector('button'),data=new FormData(form);if(!String(data.get('name')).trim()){form.elements.name.setCustomValidity('Ange ditt namn.');form.elements.name.reportValidity();form.elements.name.oninput=()=>form.elements.name.setCustomValidity('');return;}button.disabled=true;try{await send(config.contactTable,{id:contactId,name:String(data.get('name')).trim(),email:String(data.get('email')).trim(),consent:true});form.innerHTML='<p role="status"><strong>Tack! Din intresseanmälan har sparats.</strong></p>';}catch(err){document.querySelector('#contact-error').textContent=err.message;button.disabled=false;}};}
+function navigation() {
+  if (page === 99) {steps.innerHTML='';return;}
+  steps.innerHTML = [t('information'), ...sections.map((_,i)=>localSection(i).title), t('reviewNav')].map((title,i) =>
+    `<button type="button" class="step ${page===i-1?'active':''}" data-page="${i-1}" ${i-1>maxPage?'disabled':''} ${page===i-1?'aria-current="step"':''}><span class="step-num">${i===0?'i':i}</span>${escape(title)}</button>`).join('');
+  steps.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>go(Number(b.dataset.page)));
+}
+function go(p) {
+  page=p; maxPage=Math.max(maxPage,p); declined=false;
+  render();window.scrollTo({top:0});main.focus();
+}
+function render() {
+  chrome();navigation();
+  if (page===99) {showSuccess();return;}
+  if (declined) {showDeclined();return;}
+  if (page===-1) {showIntro();return;}
+  if (page===sections.length) {review();return;}
+  const section=localSection(page);
+  main.innerHTML=`<div class="progress-meta"><span>${t('part')} ${page+1} ${t('of')} ${sections.length}</span><span>${Math.round(page/sections.length*100)} ${t('progressSuffix')}</span></div>
+    <progress value="${page}" max="${sections.length}" aria-label="${t('progress')}"></progress>
+    <div class="section-heading"><p class="step-kicker">${escape(section.subtitle)}</p><h2>${escape(section.title)}</h2><p>${t('optional')}</p></div>
+    <form class="panel" id="survey">${sections[page].questions.map(questionHTML).join('')}
+      <div class="actions"><button class="secondary" type="button" id="back">${t('back')}</button><button class="primary">${t(page===sections.length-1?'reviewButton':'next')}</button></div>
+      <p class="privacy-note">${t('memory')}</p></form>`;
+  const form=document.querySelector('#survey');
+  form.addEventListener('change',record);
+  form.addEventListener('input',e=>{if(e.target.matches('textarea,input[type=text]'))record(e);});
+  form.onsubmit=e=>{e.preventDefault();go(page+1);};
+  document.querySelector('#back').onclick=()=>go(page-1);
+  updateConditional();
+}
+function showIntro() {
+  main.innerHTML=`<section class="panel"><p class="step-kicker">${t('welcome')}</p><h2>${t('studyInfo')}</h2>
+    ${lang==='fi'?fiInfo:svInfo}<p class="hint">${t('translationNote')}</p><p class="intro-note">${t('introNote')}</p>
+    <form id="consent"><fieldset class="question"><legend><span class="q-num">${t('question')} 1</span>${t('consent')}</legend><div class="choices compact">
+    ${['Ja','Nej'].map((v,i)=>`<label class="choice"><input required type="radio" name="consent" value="${v}" ${answers.Q24===v?'checked':''}>${t(i===0?'yes':'no')}</label>`).join('')}</div></fieldset>
+    <div class="actions"><span class="hint">${t('pace')}</span><button class="primary">${t('continue')}</button></div></form></section>`;
+  document.querySelectorAll('[name=consent]').forEach(el=>el.onchange=()=>{if(el.value==='Nej'){answers={};maxPage=-1;navigation();}answers.Q24=el.value;});
+  document.querySelector('#consent').onsubmit=e=>{
+    e.preventDefault();
+    if(new FormData(e.target).get('consent')==='Ja'){answers.Q24='Ja';go(0);}
+    else {answers={};maxPage=-1;page=-1;declined=true;render();}
+  };
+}
+function showDeclined() {
+  main.innerHTML=`<section class="panel"><h2>${t('declinedTitle')}</h2><p>${t('declined')}</p><button class="secondary" id="restart">${t('backInfo')}</button></section>`;
+  document.querySelector('#restart').onclick=()=>go(-1);
+}
+function questionHTML(q) {
+  const value=answers[q.id], translated=localQuestion(q);
+  const label=`<span class="q-num">${q.number?t('question')+' '+q.number:t('extra')}</span>${escape(translated.title)}`;
+  let body='';
+  if(q.type==='text') body=`<textarea aria-label="${escape(translated.title)}" name="${q.id}" maxlength="5000" rows="3">${escape(value)}</textarea>`;
+  else if(q.type==='matrix') body=`<p class="hint">${t('matrixHint')}</p>${q.rows.map((_,r)=>
+    `<fieldset class="matrix-row"><legend>${escape(translated.rows[r])}</legend><div class="matrix-options" style="--cols:${q.options.length}">
+    ${q.options.map((v,i)=>`<label class="choice"><input type="radio" name="${q.id}:${r}" value="${escape(v)}" ${value?.[r]===v?'checked':''}><span>${escape(translated.options[i])}</span></label>`).join('')}</div></fieldset>`).join('')}`;
+  else body=`${q.type==='multi'?`<p class="hint">${t('multiHint')}</p>`:''}<div class="choices ${translated.options.every(o=>o.length<40)?'compact':''}">
+    ${q.options.map((v,i)=>`<label class="choice"><input type="${q.type==='multi'?'checkbox':'radio'}" name="${q.id}" value="${escape(v)}" ${(q.type==='multi'?value?.includes(v):value===v)?'checked':''}><span>${escape(translated.options[i])}</span></label>`).join('')}</div>
+    ${q.other?`<label class="other-label" id="${q.id}_other_wrap">${t('other')}<input type="text" name="${q.id}_other" maxlength="5000" value="${escape(answers[q.id+'_other'])}"></label>`:''}`;
+  return `<fieldset class="question" data-question="${q.id}"><legend>${label}</legend>${body}</fieldset>`;
+}
+function record(e) {
+  const el=e.target, [id,row]=el.name.split(':'); if(!id)return;
+  const q=questions.find(q=>q.id===id);
+  if(el.type==='checkbox') {
+    let values=[...document.querySelectorAll(`input[name="${id}"]:checked`)].map(x=>x.value);
+    if(q?.exclusive&&el.checked) {
+      values=el.value===q.exclusive?[q.exclusive]:values.filter(x=>x!==q.exclusive);
+      document.querySelectorAll(`input[name="${id}"]`).forEach(x=>x.checked=values.includes(x.value));
+    }
+    answers[id]=values;
+  } else if(row!==undefined) {answers[id]??={};answers[id][row]=el.value;}
+  else answers[id]=el.value;
+  updateConditional();
+}
+function updateConditional() {
+  for(const q of questions) {
+    const box=document.querySelector(`[data-question="${q.id}"]`); if(!box)continue;
+    if(q.when) {
+      const visible=answers[q.when[0]]===q.when[1];box.hidden=!visible;box.disabled=!visible;
+      if(!visible)delete answers[q.id];
+    }
+    if(q.other) {
+      const show=answers[q.id]?.includes('Annat'), wrap=document.querySelector('#'+q.id+'_other_wrap');
+      wrap.hidden=!show;wrap.querySelector('input').disabled=!show;
+      if(!show)delete answers[q.id+'_other'];
+    }
+  }
+}
+function review() {
+  const cleaned=cleanAnswers(answers);
+  main.innerHTML=`<section class="panel"><p class="step-kicker">${t('last')}</p><h2>${t('reviewTitle')}</h2><p>${t('reviewHint')}</p>
+    ${sections.map((s,i)=>`<details class="review-section"><summary>${escape(localSection(i).title)}</summary><dl>
+      ${s.questions.filter(q=>!q.when||answers[q.when[0]]===q.when[1]).map(q=>`<dt>${q.number?q.number+'. ':''}${escape(localQuestion(q).title)}</dt><dd>${answerText(q,cleaned[q.id])}</dd>`).join('')}</dl>
+      <button type="button" class="text-button" data-edit="${i}">${t('edit')}</button></details>`).join('')}
+    <p class="privacy-note">${t('privacy')}</p><div role="alert" id="error" class="error"></div>
+    <div class="actions"><button class="secondary" id="back">${t('back')}</button><button class="primary" id="send">${t('send')}</button></div></section>`;
+  document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>go(Number(b.dataset.edit)));
+  document.querySelector('#back').onclick=()=>go(sections.length-1);
+  document.querySelector('#send').onclick=submit;
+}
+function answerText(q,v) {
+  if(v===undefined)return t('unanswered');
+  const translated=localQuestion(q), option=value=>translated.options[q.options.indexOf(value)]??t('unanswered');
+  if(q.type==='matrix')return q.rows.map((_,i)=>escape(translated.rows[i])+': '+escape(option(v[i]))).join('<br>');
+  if(q.type==='text')return escape(v);
+  return escape(Array.isArray(v)?v.map(option).join('; ')+(answers[q.id+'_other']?' — '+answers[q.id+'_other']:''):option(v));
+}
+async function send(table,payload) {
+  if(!config.url||!config.key)throw new Error(t('notOpen'));
+  let res;
+  try {
+    res=await fetch(`${config.url}/rest/v1/${table}`,{method:'POST',headers:{'Content-Type':'application/json',apikey:config.key,Prefer:'return=minimal'},body:JSON.stringify(payload),signal:AbortSignal.timeout(20000)});
+  } catch(e) {throw new Error(t(e.name==='TimeoutError'?'timeout':'sendError'));}
+  if(res.status===409){const body=await res.json().catch(()=>({}));if(body.code==='23505')return;}
+  if(!res.ok)throw new Error(t('sendError'));
+}
+function lock(value) {
+  busy=value;languageControl.querySelectorAll('button').forEach(b=>b.disabled=value);
+  steps.querySelectorAll('button').forEach(b=>b.disabled=value || Number(b.dataset.page)>maxPage);
+  main.querySelectorAll('button').forEach(b=>b.disabled=value);
+}
+async function submit() {
+  if(busy)return;lock(true);
+  const button=document.querySelector('#send');button.textContent=t('sending');document.querySelector('#error').textContent='';
+  try {
+    await send(config.responseTable,{id:responseId,survey_version:'1.0',answers:cleanAnswers(answers)});
+    answers={};maxPage=-1;page=99;lock(false);render();window.scrollTo({top:0});main.focus();
+  } catch(e) {
+    document.querySelector('#error').textContent=e.message;button.textContent=t('retry');lock(false);
+  }
+}
+function showSuccess() {
+  main.innerHTML=`<section class="panel"><div class="success-mark" aria-hidden="true">✓</div><p class="step-kicker">${t('sent')}</p><h2>${t('thanks')}</h2><p>${t('saved')}</p>
+    <hr class="divider"><h2>${t('interview')}</h2><p>${t('interviewIntro')}</p><p class="hint">${t('interviewPrivacy')}</p>
+    ${contactSaved?`<p role="status"><strong>${t('contactSaved')}</strong></p>`:`<form class="contact" id="contact">
+      <label>${t('name')}<input type="text" name="name" required maxlength="200" autocomplete="name" value="${escape(contact.name)}"></label>
+      <label>${t('email')}<input type="email" name="email" required maxlength="254" autocomplete="email" value="${escape(contact.email)}"></label>
+      <label class="choice"><input type="checkbox" name="consent" required ${contact.consent?'checked':''}><span>${t('contactConsent')}</span></label>
+      <div class="error" id="contact-error" role="alert"></div><button class="primary" type="submit">${t('contactSend')}</button></form>`}
+    <p class="privacy-note">${t('close')}</p></section>`;
+  const form=document.querySelector('#contact');if(!form)return;
+  form.oninput=e=>{contact[e.target.name]=e.target.type==='checkbox'?e.target.checked:e.target.value;e.target.setCustomValidity('');};
+  form.onsubmit=async e=>{
+    e.preventDefault();if(busy)return;
+    if(!contact.name.trim()){form.elements.name.setCustomValidity(t('nameError'));form.elements.name.reportValidity();return;}
+    lock(true);const button=form.querySelector('button');button.textContent=t('sending');
+    try {
+      await send(config.contactTable,{id:contactId,name:contact.name.trim(),email:contact.email.trim(),consent:true});
+      contact={name:'',email:'',consent:false};contactSaved=true;lock(false);render();
+    } catch(err){document.querySelector('#contact-error').textContent=err.message;button.textContent=t('contactSend');lock(false);}
+  };
+}
 window.addEventListener('beforeunload',e=>{if(Object.keys(answers).length>1){e.preventDefault();e.returnValue='';}});
 render();
