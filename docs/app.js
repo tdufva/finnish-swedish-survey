@@ -8,7 +8,7 @@ const main = document.querySelector('#main');
 const steps = document.querySelector('#steps');
 const escape = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let lang = new URLSearchParams(location.search).get('lang') === 'fi' ? 'fi' : 'sv';
-let answers = {}, page = -1, maxPage = -1, busy = false, declined = false;
+let answers = {}, page = -1, consentAccepted = false, busy = false, declined = false;
 let contact = {name:'', email:'', consent:false}, contactSaved = false;
 const responseId = crypto.randomUUID();
 const contactId = crypto.randomUUID();
@@ -50,13 +50,29 @@ function chrome() {
   }
 }
 function navigation() {
+  document.querySelector('.mobile-navigation')?.remove();
   if (page === 99) {steps.innerHTML='';return;}
   steps.innerHTML = [t('information'), ...sections.map((_,i)=>localSection(i).title), t('reviewNav')].map((title,i) =>
-    `<button type="button" class="step ${page===i-1?'active':''}" data-page="${i-1}" ${i-1>maxPage?'disabled':''} ${page===i-1?'aria-current="step"':''}><span class="step-num">${i===0?'i':i}</span>${escape(title)}</button>`).join('');
+    `<button type="button" class="step ${page===i-1?'active':''}" data-page="${i-1}" ${busy || (i>0 && !consentAccepted)?'disabled':''} ${page===i-1?'aria-current="step"':''}><span class="step-num">${i===0?'i':i}</span>${escape(title)}</button>`).join('');
   steps.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>go(Number(b.dataset.page)));
+  const mobile = document.createElement('label');
+  mobile.className = 'mobile-navigation';
+  mobile.textContent = t('navLabel');
+  const select = document.createElement('select');
+  select.id = 'section-select';
+  select.disabled = busy;
+  [t('information'), ...sections.map((_,i)=>localSection(i).title), t('reviewNav')].forEach((title,i)=>{
+    const option = new Option(title, String(i-1), false, page===i-1);
+    option.disabled = i>0 && !consentAccepted;
+    select.add(option);
+  });
+  select.onchange = () => go(Number(select.value));
+  mobile.append(select);
+  steps.after(mobile);
 }
 function go(p) {
-  page=p; maxPage=Math.max(maxPage,p); declined=false;
+  if (busy || (p >= 0 && !consentAccepted)) return;
+  page=p; declined=false;
   render();window.scrollTo({top:0});main.focus();
 }
 function render() {
@@ -85,11 +101,11 @@ function showIntro() {
     <form id="consent"><fieldset class="question"><legend><span class="q-num">${t('question')} 1</span>${t('consent')}</legend><div class="choices compact">
     ${['Ja','Nej'].map((v,i)=>`<label class="choice"><input required type="radio" name="consent" value="${v}" ${answers.Q24===v?'checked':''}>${t(i===0?'yes':'no')}</label>`).join('')}</div></fieldset>
     <div class="actions"><span class="hint">${t('pace')}</span><button class="primary">${t('continue')}</button></div></form></section>`;
-  document.querySelectorAll('[name=consent]').forEach(el=>el.onchange=()=>{if(el.value==='Nej'){answers={};maxPage=-1;navigation();}answers.Q24=el.value;});
+  document.querySelectorAll('[name=consent]').forEach(el=>el.onchange=()=>{if(el.value==='Nej'){answers={};consentAccepted=false;navigation();}answers.Q24=el.value;});
   document.querySelector('#consent').onsubmit=e=>{
     e.preventDefault();
-    if(new FormData(e.target).get('consent')==='Ja'){answers.Q24='Ja';go(0);}
-    else {answers={};maxPage=-1;page=-1;declined=true;render();}
+    if(new FormData(e.target).get('consent')==='Ja'){answers.Q24='Ja';consentAccepted=true;go(0);}
+    else {answers={};consentAccepted=false;page=-1;declined=true;render();}
   };
 }
 function showDeclined() {
@@ -167,15 +183,17 @@ async function send(table,payload) {
 }
 function lock(value) {
   busy=value;languageControl.querySelectorAll('button').forEach(b=>b.disabled=value);
-  steps.querySelectorAll('button').forEach(b=>b.disabled=value || Number(b.dataset.page)>maxPage);
+  steps.querySelectorAll('button').forEach(b=>b.disabled=value || (Number(b.dataset.page)>=0 && !consentAccepted));
   main.querySelectorAll('button').forEach(b=>b.disabled=value);
+  const select = document.querySelector('#section-select');
+  if (select) select.disabled = value;
 }
 async function submit() {
   if(busy)return;lock(true);
   const button=document.querySelector('#send');button.textContent=t('sending');document.querySelector('#error').textContent='';
   try {
     await send(config.responseTable,{id:responseId,survey_version:'1.0',answers:cleanAnswers(answers)});
-    answers={};maxPage=-1;page=99;lock(false);render();window.scrollTo({top:0});main.focus();
+    answers={};consentAccepted=false;page=99;lock(false);render();window.scrollTo({top:0});main.focus();
   } catch(e) {
     document.querySelector('#error').textContent=e.message;button.textContent=t('retry');lock(false);
   }
